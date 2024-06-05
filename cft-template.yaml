@@ -1,0 +1,387 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description:
+  Scale an RDS PostgreSQL database instance horizontally when CPU exceeds a defined threshold.
+  **WARNING** This template creates an AWS Lambda function, Amazon CloudWatch alarm, Amazon EventBridge rule, AWS Key Management Service (AWS KMS) customer managed key, and an Amazon SNS Topic and related resources. You will be billed for the AWS resources used if you create a stack from this template.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - 
+        Label:
+          default: Application control configuration
+        Parameters:
+          - DeploymentIDParameter
+          - RDSIdentifierParameter
+          - MaxNumReadReplicaParameter
+      - 
+        Label:
+          default: Threshold control configuration
+        Parameters:
+          - CPUThresholdParameter
+          - CloudWatchMetricPeriodParameter
+          - CloudWatchMetricEvaluationPeriodsParameter
+          - CloudWatchMetricDatapointsToAlarmParameter
+      - 
+        Label:
+          default: Lambda configuration
+        Parameters:
+          - ExecutionRoleARNParameter
+          - MemorySizeParameter
+          - TimeoutParameter
+          - SecurityGroupIdsParameter
+          - SubnetIdsParameter
+          - LambdaDebugLevelParameter    
+    ParameterLabels:
+      DeploymentIDParameter:
+        default: Deployment ID
+      RDSIdentifierParameter:
+        default: RDS identifier
+      MaxNumReadReplicaParameter:
+        default: Maximum number of read replicas
+      CPUThresholdParameter:
+        default: CPU threshold
+      CloudWatchMetricPeriodParameter:
+        default: CloudWatch period      
+      CloudWatchMetricEvaluationPeriodsParameter:
+        default: CloudWatch evaluation periods      
+      CloudWatchMetricDatapointsToAlarmParameter:
+        default: CloudWatch datapoints to alarm
+      ExecutionRoleARNParameter:
+        default: AWS Lambda execution role
+      MemorySizeParameter:
+        default: Memory size
+      TimeoutParameter:
+        default: AWS Lambda timeout
+      SecurityGroupIdsParameter:
+        default: Security groups
+      SubnetIdsParameter:
+        default: Subnets
+      LambdaDebugLevelParameter:
+        default: Python debug level
+
+Parameters:
+  MemorySizeParameter:
+    Type: Number
+    Default: 128
+    MinValue: 128
+    MaxValue: 10240
+    Description: The amount of memory available to the function at runtime. Increasing the function memory also increases its CPU allocation. Value can be any multiple of 1 MB up to 10240.
+  TimeoutParameter:
+    Type: Number
+    Default: 900
+    MinValue: 3
+    MaxValue: 900
+    Description: Amount of time in seconds AWS Lambda allows a function to run before stopping it. Maximum allowed value is 900 seconds.
+  ExecutionRoleARNParameter:
+    Type: String
+    AllowedPattern: arn:(aws[a-zA-Z-]*)?:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+
+    Description: The Amazon Resource Name (ARN) of the Lambda function's execution role.
+  SecurityGroupIdsParameter:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: A list of VPC security groups assigned to the AWS Lambda function.
+  SubnetIdsParameter:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: A list of VPC subnet IDs assigned to the AWS Lambda function.
+  RDSIdentifierParameter:
+    Description: The RDS PostgreSQL database identifier.
+    Type: String
+    AllowedPattern: .+
+  MaxNumReadReplicaParameter:
+    Description: The Maximum number of read replicas allowed. Maximum is 5.
+    Type: Number
+    Default: 3
+    MinValue: 0
+    MaxValue: 5
+  CloudWatchMetricPeriodParameter:
+    Description: The period, in seconds, over which the CPU threshold is applied. Valid values are 10, 30, 60, and any multiple of 60.
+    Type: Number
+    Default: 900
+    MinValue: 10            
+  CloudWatchMetricEvaluationPeriodsParameter:
+    Description: The number of periods over which data is compared to the CPU threshold. 
+    Type: Number
+    Default: 1
+    MinValue: 1 
+  CloudWatchMetricDatapointsToAlarmParameter:
+    Description: The number of CPU datapoints that must be breaching to trigger the alarm.  
+    Type: Number
+    Default: 1
+    MinValue: 1           
+  LambdaDebugLevelParameter:
+    Description: Choose the debug level for Python logger. The number of messages logged changes based on the level selected.
+    Type: String
+    AllowedValues:
+      - CRITICAL
+      - ERROR
+      - WARNING
+      - INFO
+      - DEBUG
+      - NOTSET
+    Default: DEBUG
+  CPUThresholdParameter:
+    Description: Creates a read replica when your database CPU is greater than or equal to this number, and the evaluation period number of datapoints is met.  A read replica is not created when the maximum number of read replicas defined by MaxNumReadReplicaParameter is reached.
+    Type: Number
+    Default: 70
+    MinValue: 1
+    MaxValue: 100
+  DeploymentIDParameter:
+    Description: Deployment id (alpha max 9 characters). Used for resource names.
+    Type: String
+    AllowedPattern: ^[a-zA-Z]{0,9}
+    Default: POC
+
+Resources:
+  KmsKeyForSNS:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: KMS key for SNS topic
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: KEY_RDS_HORIZONTAL_SCALE
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+      EnableKeyRotation: true
+      Tags:
+        - Key: project
+          Value: AWS Amazon RDS horizontal scale example
+  KmsKeyForLog:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: KMS key for CloudWatch log
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: KEY_RDS_HORIZONTAL_SCALE
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowCloudWatchLog
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - 'kms:Encrypt*'
+              - 'kms:Decrypt*'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:Describe*'
+            Resource: '*'
+            Condition:
+              ArnLike:
+                kms:EncryptionContext:aws:logs:arn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
+      EnableKeyRotation: true
+      Tags:
+        - Key: project
+          Value: AWS Amazon RDS horizontal scale example
+  SnsHorizontalScaleNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${DeploymentIDParameter}-RDS_HORIZONTAL_SCALE_TOPIC'
+      KmsMasterKeyId: !GetAtt KmsKeyForSNS.KeyId
+      Tags:
+        - Key: project
+          Value: AWS Amazon RDS horizontal scale example
+  RdsScaleHorizontalFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      KmsKeyId: !GetAtt KmsKeyForLog.Arn
+      LogGroupName: !Sub /aws/lambda/${RdsScaleHorizontalFunction}
+      RetentionInDays: 7
+  RdsScaleHorizontalFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${DeploymentIDParameter}-ScaleRdsPostgreSqlReadReplica'
+      Description: Scale RDS instance horizontally
+      Runtime: python3.7
+      Role:
+        Ref: ExecutionRoleARNParameter
+      Handler: index.lambda_handler
+      MemorySize:
+        Ref: MemorySizeParameter
+      ReservedConcurrentExecutions: 1
+      Timeout:
+        Ref: TimeoutParameter
+      VpcConfig:
+        SecurityGroupIds:
+          Ref: SecurityGroupIdsParameter
+        SubnetIds:
+          Ref: SubnetIdsParameter
+      Tags:
+        - Key: project
+          Value: AWS Amazon RDS horizontal scale example
+      Code:
+        ZipFile:
+          !Sub |
+            import json
+            import boto3
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.setLevel(logging.${LambdaDebugLevelParameter})
+            logger.debug('Loading function')
+
+            READ_REPLICA_IDENTIFIER = '${DeploymentIDParameter}-read-replica'
+            APPLICATION_NOTIFY_ARN = '${SnsHorizontalScaleNotificationTopic}'
+            SOURCE_DB_IDENTIFIER = '${RDSIdentifierParameter}'
+            MAX_READ_REPLICAS = ${MaxNumReadReplicaParameter}
+
+            def lambda_handler(event, context):
+              try:
+                logger.debug('Received event: ' + json.dumps(event, indent=2, default=str))
+                #check the alarm status and create read replica if in ALARM
+                alarm_status = event['detail']['state']['value']
+                if alarm_status == 'ALARM':
+                  read_replica_name = create_rds_read_replica( )
+                  return {
+                    'statusCode': 200,
+                    'body': json.dumps(f'created read replica:{read_replica_name}',default=str)
+                  }
+                else:
+                  logger.debug(f'read replica not created due to alarm status: {alarm_status}')
+                  return {
+                    'statusCode': 200,
+                    'body': json.dumps(f'read replica not created due to alarm status: {alarm_status}',default=str)
+                  }
+              except Exception as e:
+                logger.error(e)
+                raise e
+
+            def create_rds_read_replica( ):
+              rds_client = boto3.client('rds')
+              response = rds_client.describe_db_instances(DBInstanceIdentifier=SOURCE_DB_IDENTIFIER)
+              number_of_read_replicas = len(response['DBInstances'][0]['ReadReplicaDBInstanceIdentifiers'])
+
+              # create only if less than max user defined replicas (RDS allows 5)
+              if number_of_read_replicas < MAX_READ_REPLICAS:
+                read_replica_identifier_instance = f'{READ_REPLICA_IDENTIFIER}-{number_of_read_replicas + 1}'
+                logger.debug(read_replica_identifier_instance)
+                create_read_replica_response = rds_client.create_db_instance_read_replica(
+                                                  DBInstanceIdentifier=read_replica_identifier_instance,
+                                                  SourceDBInstanceIdentifier=SOURCE_DB_IDENTIFIER
+                                               )
+                #notify application replica is created
+                logger.debug(create_read_replica_response)
+                notify_application(create_read_replica_response)
+                
+                try:
+                  #wait for read replica to be available
+                  waiter = rds_client.get_waiter('db_instance_available')
+                  waiter.config.delay = 5 
+                  waiter.config.max_attempts = 180
+                  waiter.wait(
+                    DBInstanceIdentifier=read_replica_identifier_instance
+                  )
+                except WaiterError as exception:
+                  logger.error("DBInstance: %s is not available yet.", read_replica_identifier_instance)                  
+                else:
+                  #notify application replica is available
+                  logger.info("DB instance: %s is available.", read_replica_identifier_instance)  
+                  status_response = rds_client.describe_db_instances(DBInstanceIdentifier=read_replica_identifier_instance)  
+                  logger.debug(status_response)
+                  notify_application(status_response) 
+                return read_replica_identifier_instance             
+              else:
+                raise Exception(f'Maximum number of read replicas reached: {MAX_READ_REPLICAS}')
+
+            def notify_application(notification_event):
+              logger.debug(f'Notify application:{APPLICATION_NOTIFY_ARN}')
+              sns_message = {
+                'default': json.dumps(notification_event,default=str)
+              }
+              logger.debug(sns_message)
+              sns_client = boto3.client('sns')
+              sns_response = sns_client.publish(
+                TargetArn=APPLICATION_NOTIFY_ARN,
+                Message = json.dumps(sns_message,default=str),
+                MessageStructure='json'
+              )
+              logger.debug(sns_response)
+  RdsCloudWatchAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Monitor RDS CPU
+      ActionsEnabled: true
+      AlarmActions: []
+      OKActions: []
+      InsufficientDataActions: []
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Dimensions:
+          - Name: DBInstanceIdentifier
+            Value: !Ref RDSIdentifierParameter
+      Period: !Ref CloudWatchMetricPeriodParameter
+      EvaluationPeriods: !Ref CloudWatchMetricEvaluationPeriodsParameter
+      DatapointsToAlarm: !Ref CloudWatchMetricDatapointsToAlarmParameter            
+      Threshold: !Ref CPUThresholdParameter
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: missing
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Execute Lambda function when rds-cpu-alarm state changes.
+      EventBusName: default
+      EventPattern:
+        !Sub |
+          {
+            "source": [
+              "aws.cloudwatch"
+            ],
+            "detail-type": [
+              "CloudWatch Alarm State Change"
+            ],
+            "resources": [
+              "${RdsCloudWatchAlarm.Arn}"
+            ]
+          }
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt RdsScaleHorizontalFunction.Arn
+          Id: IdRdsScaleHorizontalFunction
+    DependsOn: RdsScaleHorizontalFunction
+  LambdaPermissionForEvents:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt RdsScaleHorizontalFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventBridgeRule.Arn
+    DependsOn: RdsScaleHorizontalFunction
+Outputs:
+  RdsScaleHorizontalFunctionArn:
+    Description: The Arn of the AWS Lambda function
+    Value: !GetAtt RdsScaleHorizontalFunction.Arn
+  RdsCloudWatchAlarmArn:
+    Description: The Arn of the RdsCloudWatchAlarm
+    Value: !GetAtt RdsCloudWatchAlarm.Arn
+  EventBridgeRuleArn:
+    Description: The Arn of the EventBridgeRule
+    Value: !GetAtt EventBridgeRule.Arn
+  KmsKeyForSnsKeyId:
+    Description: The KMS key id for RDS Horizontal Scale SNS Topic
+    Value: !GetAtt KmsKeyForSNS.KeyId
+  KmsKeyForLogKeyId:
+    Description: The KMS key id for RDS Horizontal Scale Log group
+    Value: !GetAtt KmsKeyForLog.KeyId
+  SnsHorizontalScaleNotificationTopicArn:
+    Description: The Arn of the SNS RDS Horizontal Scale Notification Topic
+    Value: !Ref SnsHorizontalScaleNotificationTopic
+  LambdaFunctionName:
+    Description: The Lambda function name
+    Value: !Sub '${DeploymentIDParameter}-ScaleRdsPostgreSqlReadReplica'
+  SnsTopicName:
+    Description: The SNS Topic name
+    Value: !Sub '${DeploymentIDParameter}-RDS_HORIZONTAL_SCALE_TOPIC'
