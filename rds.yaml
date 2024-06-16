@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: RDS Instance Testing Read Replica Auto Scaling
+
+Parameters:
+  masterpassword:
+    Description: Master User's Master Password
+    Type: String
+    NoEcho: true
+
+Resources:
+  RdsInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      # Engine Options
+      Engine: postgres
+      EngineVersion: 16.2
+      
+      # Availability and durability
+      MultiAZ: false
+      
+      # Settings
+      DBInstanceIdentifier: rds # unique unchangeable name
+      MasterUsername: postgres
+      ManageMasterUserPassword: false # AWS Secrets Manager
+      MasterUserPassword: !Ref masterpassword
+      
+      # Instance configuration
+      DBInstanceClass: db.t3.smalll # small, medium, large, xlarge, 2xlarge
+      
+      # Storage
+      StorageType: gp2
+      AllocatedStorage: '20'
+      MaxAllocatedStorage: '40' # Storage Autoscaling
+      
+      # Connectivity
+      NetworkType: IPV4
+      DBSubnetGroupName: default-vpc-123456 # TODO
+      PubliclyAccessible: true
+      VPCSecurityGroups:
+        - !Ref SecurityGroup
+      # AvailabilityZone: String
+      # CACertificateIdentifier: rds-ca-rsa2048-g1
+      Port: 5432
+      
+      # Tags
+      Tags: 
+        - Key: Cost
+          Value: RDS
+      
+      # Database authentication
+      EnableIAMDatabaseAuthentication: true
+
+      # Monitoring
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      PerformanceInsightsKMSKeyId: arn:aws:kms:ap-south-1:123456:key/123456 # TODO
+      MonitoringInterval: 60
+      MonitoringRoleArn: arn:aws:iam::123456:role/rds-monitoring-role # TODO
+      
+      # Additional configuration
+      # DBName: # (If you do not specify a database name, Amazon RDS does not create a database.)
+      DBParameterGroupName: rds-parameter # Be sure to make this beforehand !!!
+      BackupRetentionPeriod: 
+      PreferredBackupWindow: 18:15-18:45 # hh24:mi-hh24:mi UTC
+      CopyTagsToSnapshot: false
+      # AutomaticBackupReplicationRegion: String
+      KmsKeyId: arn:aws:kms:ap-south-1:123456:key/123456 # TODO
+      StorageEncrypted: true
+      EnableCloudwatchLogsExports: 
+        - postgresql
+        - upgrade
+      AutoMinorVersionUpgrade: false
+      PreferredMaintenanceWindow: 'sat:16:45-sat:17:15' # ddd:hh24:mi-ddd:hh24:mi UTC # TO DO
+      DeletionProtection: false
+
+      # CloudFormation Requirements
+      DeleteAutomatedBackups: true # when database is terminated
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: rds-sg # Cannot start with `sg-`
+      GroupDescription: RDS Firewall
+      VpcId: vpc-123456  # TO DO
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+          Description: "Open Firewall for Port 5432"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
