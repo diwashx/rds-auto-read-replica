@@ -316,7 +316,7 @@ Resources:
       AlarmActions: []
       OKActions: []
       InsufficientDataActions: []
-      MetricName: CPUUtilization
+      MetricName: BurstBalance
       Namespace: AWS/RDS
       Statistic: Average
       Dimensions:
