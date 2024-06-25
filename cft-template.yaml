@@ -21,7 +21,7 @@ Metadata:
         Label:
           default: Threshold control configuration
         Parameters:
-          - CPUThresholdParameter
+          - BurstBalanceThresholdParameter
           - CloudWatchMetricPeriodParameter
           - CloudWatchMetricEvaluationPeriodsParameter
           - CloudWatchMetricDatapointsToAlarmParameter
@@ -42,8 +42,8 @@ Metadata:
         default: RDS identifier
       MaxNumReadReplicaParameter:
         default: Maximum number of read replicas
-      CPUThresholdParameter:
-        default: CPU threshold
+      BurstBalanceThresholdParameter:
+        default: BurstBalance threshold
       CloudWatchMetricPeriodParameter:
         default: CloudWatch period      
       CloudWatchMetricEvaluationPeriodsParameter:
@@ -122,8 +122,8 @@ Parameters:
       - DEBUG
       - NOTSET
     Default: DEBUG
-  CPUThresholdParameter:
-    Description: Creates a read replica when your database CPU is greater than or equal to this number, and the evaluation period number of datapoints is met.  A read replica is not created when the maximum number of read replicas defined by MaxNumReadReplicaParameter is reached.
+  BurstBalanceThresholdParameter:
+    Description: Creates a read replica when your database Burst Balance is greater than or equal to this number, and the evaluation period number of datapoints is met.  A read replica is not created when the maximum number of read replicas defined by MaxNumReadReplicaParameter is reached.
     Type: Number
     Default: 70
     MinValue: 1
@@ -325,7 +325,7 @@ Resources:
       Period: !Ref CloudWatchMetricPeriodParameter
       EvaluationPeriods: !Ref CloudWatchMetricEvaluationPeriodsParameter
       DatapointsToAlarm: !Ref CloudWatchMetricDatapointsToAlarmParameter            
-      Threshold: !Ref CPUThresholdParameter
+      Threshold: !Ref BurstBalanceThresholdParameter
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: missing
   EventBridgeRule:

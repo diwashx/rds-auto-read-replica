@@ -7,7 +7,142 @@ Parameters:
     Type: String
     NoEcho: true
 
+Mappings:
+  NetworkToSubnet:
+    "10.0.0.0":
+      PubSubnetZone: "10.0.10.0/24"
+
+
 Resources:
+# https://github.com/getcft/aws-encrypted-rds-cf-template/blob/master/encrypted-rds-cf-template.yml
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        'Fn::Join': [ '/', [ '10.0.0.0', '16' ] ]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: 'default'
+      Tags:
+        - Key: Cost
+          Value: VPC
+
+  PubSubnetZone:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - '0'
+        - Fn::GetAZs:
+            Ref: 'AWS::Region'
+      CidrBlock:
+          Fn::FindInMap:
+          - NetworkToSubnet
+          - '10.0.0.0'
+          - PubSubnetZone
+      #MapPublicIpOnLaunch: 'True'
+      VpcId:
+        Ref: 'VPC'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+        Tags:
+            - Key: Cost
+              Value: InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+          Ref: 'InternetGateway'
+      VpcId:
+          Ref: 'VPC'
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+          Ref: 'VPC'
+
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+          Ref: 'InternetGateway'
+      RouteTableId:
+          Ref: 'RouteTable'
+
+  RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+          Ref: 'PubSubnetZone'
+      RouteTableId:
+          Ref: 'RouteTable'
+
+  RDSDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: RDS Subnet Group
+      DBSubnetGroupName: "RDS_DB_Subnet"
+      SubnetIds:
+        - !Ref PubSubnetZone
+
+# https://stackoverflow.com/questions/40294802/cloudformation-template-for-amazonrdsenhancedmonitoringrole
+  EnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ''
+          Effect: Allow
+          Principal:
+            Service: monitoring.rds.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Path: "/"
+
+# https://github.com/getcft/aws-encrypted-rds-cf-template/blob/master/encrypted-rds-cf-template.yml
+  RDSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-rds
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':root'
+            Action: 'kms:*'
+            Resource: '*'
+  rdsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/rds
+      TargetKeyId:
+        Ref: RDSKey
+
+  RDSParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      DBParameterGroupName: rds-auto-read-replica
+      Description: RDS Parameters
+      Family: postgres16
+      Tags:
+        - Key: Cost
+          Value: DBParameterGroup
+      Parameters: #the values must always be string (single quoted)
+        rds.force_ssl: '0'
+
   RdsInstance:
     Type: AWS::RDS::DBInstance
     Properties:
@@ -34,7 +169,7 @@ Resources:
       
       # Connectivity
       NetworkType: IPV4
-      DBSubnetGroupName: default-vpc-123456 # TODO
+      DBSubnetGroupName: !Ref RDSDBSubnetGroup
       PubliclyAccessible: true
       VPCSecurityGroups:
         - !Ref SecurityGroup
@@ -53,24 +188,25 @@ Resources:
       # Monitoring
       EnablePerformanceInsights: true
       PerformanceInsightsRetentionPeriod: 7
-      PerformanceInsightsKMSKeyId: arn:aws:kms:ap-south-1:123456:key/123456 # TODO
+      #PerformanceInsightsKMSKeyId: arn:aws:kms:ap-south-1:123456:key/123456
+      # If you do not specify a value for PerformanceInsightsKMSKeyId , then Amazon RDS uses your default KMS key.
       MonitoringInterval: 60
-      MonitoringRoleArn: arn:aws:iam::123456:role/rds-monitoring-role # TODO
+      MonitoringRoleArn: !GetAtt ['EnhancedMonitoringRole', 'Arn']
       
       # Additional configuration
       # DBName: # (If you do not specify a database name, Amazon RDS does not create a database.)
-      DBParameterGroupName: rds-parameter # Be sure to make this beforehand !!!
+      DBParameterGroupName: rds-auto-read-replica # Name should be same as above resource.
       BackupRetentionPeriod: 
       PreferredBackupWindow: 18:15-18:45 # hh24:mi-hh24:mi UTC
       CopyTagsToSnapshot: false
       # AutomaticBackupReplicationRegion: String
-      KmsKeyId: arn:aws:kms:ap-south-1:123456:key/123456 # TODO
+      KmsKeyId: !Ref RDSKey
       StorageEncrypted: true
       EnableCloudwatchLogsExports: 
         - postgresql
         - upgrade
       AutoMinorVersionUpgrade: false
-      PreferredMaintenanceWindow: 'sat:16:45-sat:17:15' # ddd:hh24:mi-ddd:hh24:mi UTC # TO DO
+      #PreferredMaintenanceWindow: 'sat:16:45-sat:17:15' # ddd:hh24:mi-ddd:hh24:mi UTC # Required: No
       DeletionProtection: false
 
       # CloudFormation Requirements
@@ -81,7 +217,7 @@ Resources:
     Properties:
       GroupName: rds-sg # Cannot start with `sg-`
       GroupDescription: RDS Firewall
-      VpcId: vpc-123456  # TO DO
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 5432
