@@ -10,8 +10,8 @@ Parameters:
 Mappings:
   NetworkToSubnet:
     "10.0.0.0":
-      PubSubnetZone: "10.0.10.0/24"
-
+      PubSubnetZoneA: "10.0.10.0/24"
+      PubSubnetZoneB: "10.0.20.0/24"
 
 Resources:
 # https://github.com/getcft/aws-encrypted-rds-cf-template/blob/master/encrypted-rds-cf-template.yml
@@ -27,7 +27,7 @@ Resources:
         - Key: Cost
           Value: VPC
 
-  PubSubnetZone:
+  PubSubnetZoneA:
     Type: AWS::EC2::Subnet
     Properties:
       AvailabilityZone:
@@ -39,7 +39,24 @@ Resources:
           Fn::FindInMap:
           - NetworkToSubnet
           - '10.0.0.0'
-          - PubSubnetZone
+          - PubSubnetZoneA
+      #MapPublicIpOnLaunch: 'True'
+      VpcId:
+        Ref: 'VPC'
+
+  PubSubnetZoneB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - '1'
+        - Fn::GetAZs:
+            Ref: 'AWS::Region'
+      CidrBlock:
+          Fn::FindInMap:
+          - NetworkToSubnet
+          - '10.0.0.0'
+          - PubSubnetZoneB
       #MapPublicIpOnLaunch: 'True'
       VpcId:
         Ref: 'VPC'
@@ -59,7 +76,13 @@ Resources:
       VpcId:
           Ref: 'VPC'
 
-  RouteTable:
+  RouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+          Ref: 'VPC'
+
+  RouteTableB:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId:
@@ -74,13 +97,21 @@ Resources:
       RouteTableId:
           Ref: 'RouteTable'
 
-  RouteAssociation:
+  RouteAssociationA:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId:
-          Ref: 'PubSubnetZone'
+          Ref: 'PubSubnetZoneA'
       RouteTableId:
-          Ref: 'RouteTable'
+          Ref: 'RouteTableA'
+
+  RouteAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+          Ref: 'PubSubnetZoneB'
+      RouteTableId:
+          Ref: 'RouteTableB'
 
   RDSDBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
@@ -88,7 +119,8 @@ Resources:
       DBSubnetGroupDescription: RDS Subnet Group
       DBSubnetGroupName: "RDS_DB_Subnet"
       SubnetIds:
-        - !Ref PubSubnetZone
+        - !Ref PubSubnetZoneA
+        - !Ref PubSubnetZoneB
 
 # https://stackoverflow.com/questions/40294802/cloudformation-template-for-amazonrdsenhancedmonitoringrole
   EnhancedMonitoringRole:
