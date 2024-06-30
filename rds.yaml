@@ -201,7 +201,7 @@ Resources:
       MasterUserPassword: !Ref masterpassword
       
       # Instance configuration
-      DBInstanceClass: db.t3.smalll # small, medium, large, xlarge, 2xlarge
+      DBInstanceClass: db.t3.small # small, medium, large, xlarge, 2xlarge
       
       # Storage
       StorageType: gp2
