@@ -204,7 +204,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${DeploymentIDParameter}-ScaleRdsPostgreSqlReadReplica'
       Description: Scale RDS instance horizontally
-      Runtime: python3.7
+      Runtime: python3.12
       Role:
         Ref: ExecutionRoleARNParameter
       Handler: index.lambda_handler
