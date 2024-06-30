@@ -210,7 +210,7 @@ Resources:
       Handler: index.lambda_handler
       MemorySize:
         Ref: MemorySizeParameter
-      ReservedConcurrentExecutions: 1
+      #ReservedConcurrentExecutions: 1
       Timeout:
         Ref: TimeoutParameter
       VpcConfig:
