@@ -196,7 +196,7 @@ Resources:
       # Additional configuration
       # DBName: # (If you do not specify a database name, Amazon RDS does not create a database.)
       DBParameterGroupName: rds-auto-read-replica # Name should be same as above resource.
-      BackupRetentionPeriod: 
+      BackupRetentionPeriod: 7
       PreferredBackupWindow: 18:15-18:45 # hh24:mi-hh24:mi UTC
       CopyTagsToSnapshot: false
       # AutomaticBackupReplicationRegion: String
