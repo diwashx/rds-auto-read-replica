@@ -88,14 +88,23 @@ Resources:
       VpcId:
           Ref: 'VPC'
 
-  Route:
+  RouteA:
     Type: AWS::EC2::Route
     Properties:
       DestinationCidrBlock: '0.0.0.0/0'
       GatewayId:
           Ref: 'InternetGateway'
       RouteTableId:
-          Ref: 'RouteTable'
+          Ref: 'RouteTableA'
+
+  RouteB:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+          Ref: 'InternetGateway'
+      RouteTableId:
+          Ref: 'RouteTableB'
 
   RouteAssociationA:
     Type: AWS::EC2::SubnetRouteTableAssociation
