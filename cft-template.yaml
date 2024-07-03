@@ -40,6 +40,8 @@ Metadata:
         default: Deployment ID
       RDSIdentifierParameter:
         default: RDS identifier
+      RDSIdentifierCloudwatch:
+        default: RDS identifier for cloudwatch
       MaxNumReadReplicaParameter:
         default: Maximum number of read replicas
       BurstBalanceThresholdParameter:
@@ -88,6 +90,10 @@ Parameters:
     Description: A list of VPC subnet IDs assigned to the AWS Lambda function.
   RDSIdentifierParameter:
     Description: The RDS PostgreSQL database identifier.
+    Type: String
+    AllowedPattern: .+
+  RDSIdentifierCloudwatch:
+    Description: The RDS PostgreSQL database identifier for CloudWatch.
     Type: String
     AllowedPattern: .+
   MaxNumReadReplicaParameter:
@@ -321,7 +327,7 @@ Resources:
       Statistic: Average
       Dimensions:
           - Name: DBInstanceIdentifier
-            Value: !Ref RDSIdentifierParameter
+            Value: !Ref RDSIdentifierCloudwatch
       Period: !Ref CloudWatchMetricPeriodParameter
       EvaluationPeriods: !Ref CloudWatchMetricEvaluationPeriodsParameter
       DatapointsToAlarm: !Ref CloudWatchMetricDatapointsToAlarmParameter            
